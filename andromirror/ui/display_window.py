@@ -1,4 +1,4 @@
-"""Fenêtre d'affichage de l'écran du téléphone : image, barre d'outils, plein écran (F11 / Échap)."""
+"""Fenêtre d'affichage de l'écran du téléphone : image, barre d'outils (contrôle), plein écran (F11 / Échap)."""
 from __future__ import annotations
 
 from typing import Optional
@@ -8,6 +8,7 @@ from PySide6.QtGui import QAction, QGuiApplication, QIcon, QKeySequence, QShortc
 from PySide6.QtWidgets import QLabel, QMainWindow, QToolBar
 
 from .. import APP_NAME, paths
+from ..control import keymap
 from ..video.widget import GLVideoWidget, SoftwareVideoWidget, create_video_widget
 
 MIN_VIDEO = (240, 240)
@@ -24,6 +25,7 @@ class DisplayWindow(QMainWindow):
         self._programmatic_close = False
         self._orientation: Optional[str] = None
         self._was_maximized = False
+        self._controller = None
         self.setWindowTitle(f"{APP_NAME} — {device_name}" if device_name else APP_NAME)
         icon = paths.resource_path("assets/icon.png")
         if icon.is_file():
@@ -36,7 +38,7 @@ class DisplayWindow(QMainWindow):
         self.setCentralWidget(self.video)
         self._wire_video()
 
-        # -- barre d'outils : plein écran + emplacements réservés au contrôle (étape suivante)
+        # -- barre d'outils : plein écran, interrupteur du contrôle, boutons du téléphone
         self.toolbar = QToolBar("Outils", self)
         self.toolbar.setMovable(False)
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
@@ -45,16 +47,30 @@ class DisplayWindow(QMainWindow):
         self.act_fullscreen.setToolTip("Plein écran (F11). Échap pour en sortir.")
         self.act_fullscreen.triggered.connect(self.toggle_fullscreen)
         self.toolbar.addAction(self.act_fullscreen)
+        self.act_control = QAction("Contrôle", self)
+        self.act_control.setCheckable(True)
+        self.act_control.setChecked(True)
+        self.act_control.setEnabled(False)
+        self.act_control.setToolTip("Contrôle du téléphone avec la souris et le clavier. Décochez pour regarder "
+                                    "sans risque de toucher l'écran par erreur.")
+        self.act_control.toggled.connect(self._on_control_toggled)
+        self.toolbar.addAction(self.act_control)
         self.toolbar.addSeparator()
+        # boutons du téléphone : inactifs tant que le contrôle n'est pas branché (set_controller)
         self.placeholders = []
-        # emplacements réservés (désactivés) : libellés courts pour tenir dans une fenêtre étroite
-        for label, tip in (("◀", "Retour"), ("●", "Accueil"), ("■", "Applications récentes"),
-                           ("Vol −", "Volume moins"), ("Vol +", "Volume plus"), ("⟲", "Rotation")):
+        for label, tip, code in (("◀", "Retour (clic droit sur l'écran)", keymap.KEYCODE_BACK),
+                                 ("●", "Accueil (clic molette sur l'écran)", keymap.KEYCODE_HOME),
+                                 ("■", "Applications récentes", keymap.KEYCODE_APP_SWITCH),
+                                 ("Vol −", "Volume moins", keymap.KEYCODE_VOLUME_DOWN),
+                                 ("Vol +", "Volume plus", keymap.KEYCODE_VOLUME_UP),
+                                 ("⏻", "Verrouiller / allumer l'écran", keymap.KEYCODE_POWER)):
             act = QAction(label, self)
             act.setEnabled(False)
-            act.setToolTip(f"{tip} — le contrôle depuis le PC arrive à l'étape suivante.")
+            act.setToolTip(tip)
+            act.triggered.connect(lambda _checked=False, c=code: self._press(c))
             self.toolbar.addAction(act)
             self.placeholders.append(act)
+        self.nav_actions = self.placeholders
 
         self.info_label = QLabel("")
         self.statusBar().addWidget(self.info_label, 1)
@@ -66,6 +82,58 @@ class DisplayWindow(QMainWindow):
     def _wire_video(self) -> None:
         self.video.resized.connect(self.target_changed)
         self.video.double_clicked.connect(self.toggle_fullscreen)
+        self._wire_control()
+
+    # -- contrôle ------------------------------------------------------------------------------------------------------
+    @property
+    def controller(self):
+        return self._controller
+
+    def set_controller(self, controller) -> None:
+        """Branche le contrôleur (InputController) : active les boutons et la souris / le clavier sur l'image."""
+        if controller is self._controller:
+            return
+        self._controller = controller
+        for act in self.nav_actions:
+            act.setEnabled(True)
+        self.act_control.setEnabled(True)
+        self.act_control.setChecked(controller.enabled)
+        self._wire_control()
+
+    def _wire_control(self) -> None:
+        c = self._controller
+        if c is None:
+            return
+        v = self.video
+        v.control_enabled = c.enabled
+        v.touch_event.connect(self._on_touch)
+        v.wheel_event.connect(lambda x, y, w, h, notches: c.scroll(x, y, w, h, 0.0, notches))
+        v.side_button.connect(c.press)
+        v.key_down.connect(c.key_down)
+        v.key_up.connect(c.key_up)
+        v.focus_lost.connect(c.release_all)
+
+    def _on_touch(self, action: int, x: int, y: int, w: int, h: int) -> None:
+        c = self._controller
+        if c is None:
+            return
+        if action == 0:
+            c.touch_down(x, y, w, h)
+        elif action == 1:
+            c.touch_up(x, y, w, h)
+        else:
+            c.touch_move(x, y, w, h)
+
+    def _press(self, code: int) -> None:
+        if self._controller is not None:
+            self._controller.press(code)
+
+    def _on_control_toggled(self, on: bool) -> None:
+        if self._controller is not None:
+            self._controller.set_enabled(bool(on))
+        self.video.control_enabled = bool(on)
+        for act in self.nav_actions:
+            act.setEnabled(bool(on))
 
     def ensure_valid_gl(self) -> bool:
         """Si OpenGL n'a pas pu démarrer sur ce PC, passe au rendu logiciel. Retourne True si remplacé."""

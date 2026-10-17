@@ -464,3 +464,68 @@ def test_window_replaces_invalid_opengl_widget_by_software_and_keeps_frame(qapp,
     assert isinstance(win.video, SoftwareVideoWidget) and win.video.has_frame and targets
     assert win.ensure_valid_gl() is False                      # déjà logiciel : rien à faire
     win.close_programmatically()
+
+
+# --------------------------------------------------------------------------- contrôle (souris, clavier, boutons)
+def test_toolbar_buttons_send_keys_once_a_controller_is_plugged(qapp):
+    from andromirror.control.controller import InputController
+    from andromirror.video import protocol as P
+    win = DisplayWindow("Test", force_software=True)
+    sent = []
+    ctl = InputController(sent.append)
+    win.set_controller(ctl)
+    assert all(a.isEnabled() for a in win.nav_actions) and win.act_control.isEnabled()
+    win.nav_actions[0].trigger()                                    # ◀ Retour
+    assert sent == [P.pack_key(P.KEY_DOWN, 4), P.pack_key(P.KEY_UP, 4)]
+    win.act_control.setChecked(False)                               # interrupteur « Contrôle » éteint
+    assert not ctl.enabled and not win.video.control_enabled
+    assert all(not a.isEnabled() for a in win.nav_actions)
+    win.close_programmatically()
+
+
+def test_mouse_on_the_image_becomes_touch_in_video_pixels(qapp):
+    from PySide6.QtCore import QPoint
+    from andromirror.control.controller import InputController
+    from andromirror.video import protocol as P
+    from andromirror.video.decoder import DecodedFrame
+    win = DisplayWindow("Test", force_software=True)
+    sent = []
+    win.set_controller(InputController(sent.append))
+    win.resize(500, 700)
+    win.show()
+    qapp.processEvents()
+    v = win.video
+    v.set_frame(DecodedFrame(width=100, height=200, stride=300, data=bytes(300 * 200), pts_us=0,
+                             native_width=1080, native_height=2400))
+    from andromirror.video.widget import fit_rect
+    r = fit_rect(v.width(), v.height(), 1080, 2400)
+    center = QPoint(int(r.center().x()), int(r.center().y()))
+    QTest.mousePress(v, Qt.MouseButton.LeftButton, pos=center)
+    QTest.mouseRelease(v, Qt.MouseButton.LeftButton, pos=center)
+    assert len(sent) == 2
+    assert sent[0][0] == P.C_TOUCH and sent[0][1] == P.TOUCH_DOWN and sent[1][1] == P.TOUCH_UP
+    x = int.from_bytes(sent[0][2:4], "big")
+    y = int.from_bytes(sent[0][4:6], "big")
+    assert abs(x - 540) <= 6 and abs(y - 1200) <= 6                 # le centre de l'image = le centre du téléphone
+    assert sent[0][6:10] == (1080).to_bytes(2, "big") + (2400).to_bytes(2, "big")
+    # un clic sur une bande noire (hors de l'image) n'envoie rien
+    sent.clear()
+    if r.x() > 4:
+        QTest.mouseClick(v, Qt.MouseButton.LeftButton, pos=QPoint(1, 5))
+        assert sent == []
+    win.close_programmatically()
+
+
+def test_double_click_toggles_fullscreen_only_when_control_is_off(qapp):
+    win = DisplayWindow("Test", force_software=True)
+    seen = []
+    win.video.double_clicked.connect(lambda: seen.append(1))
+    win.video.mouseDoubleClickEvent(_FakeMouse())
+    assert seen == [1]                                              # sans contrôle : comportement d'origine
+    win.close_programmatically()
+
+
+class _FakeMouse:
+    """Suffisant pour mouseDoubleClickEvent quand le contrôle est éteint (l'événement n'est pas lu)."""
+    def button(self):
+        return None

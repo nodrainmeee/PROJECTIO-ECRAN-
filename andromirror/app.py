@@ -44,6 +44,7 @@ def selftest(result_path: str) -> int:
         info.append(_selftest_video(problems))
         info.append(_selftest_server(problems))
         info.append(_selftest_display(problems, app))
+        info.append(_selftest_audio())
     except Exception as exc:  # noqa: BLE001
         problems.append(f"exception : {exc!r}")
     text = ("ECHEC " + "; ".join(problems)) if problems else "OK " + " ".join(info)
@@ -103,6 +104,18 @@ def _selftest_server(problems) -> str:
     except Exception as exc:  # noqa: BLE001
         problems.append(f"andromirror-server.jar illisible : {exc!r}")
         return "serveur=ILLISIBLE"
+
+
+def _selftest_audio() -> str:
+    """La bibliothèque de sortie audio (PortAudio) se charge. Non bloquant : sans elle, le logiciel fonctionne, sans le son."""
+    try:
+        import sounddevice as sd
+        sd.query_hostapis()
+        return "son=ok"
+    except ImportError:
+        return "son=ABSENT"
+    except Exception as exc:  # noqa: BLE001
+        return f"son=indisponible({type(exc).__name__})"
 
 
 def _selftest_display(problems, app) -> str:

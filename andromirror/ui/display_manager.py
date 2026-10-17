@@ -4,12 +4,14 @@ La fenêtre principale ne connaît que DisplayManager : start(), stop(), et ses 
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Callable, Optional
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from ..connection.adb import AdbClient
 from ..connection.models import DeviceInfo
+from ..control.controller import InputController
 from ..logging_setup import get_logger
 from ..settings import SettingsStore
 from ..video import protocol as P
@@ -47,6 +49,9 @@ class DisplayManager(QObject):
         self._user_stop = False
         self._decoder_text = "—"
         self._hello: Optional[P.Hello] = None
+        self._store_listener: Optional[Callable[[str, str, Any], None]] = None
+        self._rx_bytes = 0
+        self._rx_changed_at = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(STATS_INTERVAL_MS)
         self._timer.timeout.connect(self._refresh_stats)
@@ -57,6 +62,26 @@ class DisplayManager(QObject):
         """Vrai tant qu'une session existe (y compris pendant son arrêt)."""
         return self.session is not None
 
+    def stream_alive(self, within: float = 2.5) -> bool:
+        """Vrai si des données du téléphone sont arrivées il y a moins de `within` secondes.
+
+        Sert à ne pas fermer un affichage qui fonctionne parce qu'`adb devices` a eu un raté passager (adb est
+        plus lent à répondre pendant un flux vidéo important) : le flux lui-même prouve que le téléphone est là.
+        """
+        if self.session is None:
+            return False
+        self._track_bytes()
+        return self._rx_bytes > 0 and (time.monotonic() - self._rx_changed_at) < within
+
+    def _track_bytes(self) -> None:
+        sess = self.session
+        if sess is None:
+            return
+        received = sess.bytes_received
+        if received != self._rx_bytes:
+            self._rx_bytes = received
+            self._rx_changed_at = time.monotonic()
+
     # -- démarrage ----------------------------------------------------------------------------------------
     def start(self, device: DeviceInfo) -> None:
         if self.session is not None:
@@ -65,6 +90,8 @@ class DisplayManager(QObject):
         self._user_stop = False
         self._hello = None
         self._decoder_text = "—"
+        self._rx_bytes = 0
+        self._rx_changed_at = time.monotonic()
         name = device.display_name
         settings = self.store.as_dict()
         sess = self._session_factory(device.serial, settings)
@@ -79,6 +106,11 @@ class DisplayManager(QObject):
         sess.decoder_info.connect(self._on_decoder)
         sess.server_message.connect(self._on_server_message)
         sess.ended.connect(self._on_ended)
+        set_controller = getattr(win, "set_controller", None)
+        if set_controller is not None:
+            set_controller(InputController(sess.send_command))
+        self._store_listener = lambda section, key, value: self._on_setting(sess, section, key, value)
+        self.store.subscribe(self._store_listener)
         win.show()
         win.ensure_valid_gl()
         QTimer.singleShot(800, win.ensure_valid_gl)
@@ -120,6 +152,11 @@ class DisplayManager(QObject):
             self.session.stop()
         self.user_closed.emit()
 
+    def _on_setting(self, sess: ScreenSession, section: str, key: str, value: Any) -> None:
+        """Réglage modifié pendant la session : le volume s'applique tout de suite."""
+        if section == "audio" and key == "volume":
+            sess.set_volume(int(value))
+
     # -- événements de la session ----------------------------------------------------------------------
     def _on_progress(self, text: str) -> None:
         if self.window is not None and not self.window.video.has_frame:
@@ -158,6 +195,7 @@ class DisplayManager(QObject):
         sess, win = self.session, self.window
         if sess is None or win is None:
             return
+        self._track_bytes()
         st = sess.stats()
         codec = {"h264": "H.264", "hevc": "H.265"}.get(self._hello.codec, "") if self._hello else ""
         size = f"{st.width}×{st.height}" if st.width else "—"
@@ -181,6 +219,9 @@ class DisplayManager(QObject):
 
     def _release(self) -> None:
         self._timer.stop()
+        if self._store_listener is not None:
+            self.store.unsubscribe(self._store_listener)
+            self._store_listener = None
         win, sess = self.window, self.session
         self.window = self.session = None
         if sess is not None:

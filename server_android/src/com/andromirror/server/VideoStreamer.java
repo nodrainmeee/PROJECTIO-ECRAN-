@@ -20,9 +20,25 @@ import java.nio.ByteBuffer;
 final class VideoStreamer {
     private static final long POLL_US = 50_000;           // attente d'un paquet encodé
     private static final long DISPLAY_CHECK_MS = 250;     // fréquence de vérification de la rotation
+    private static final int MAX_RESTARTS = 5;            // incidents tolérés...
+    private static final long RESTART_WINDOW_MS = 20_000; // ...dans cette durée
+    private static final long RESTART_PAUSE_MS = 500;     // pause avant de relancer
+
+    /** Taille de la vidéo envoyée et de l'écran réel : sert à convertir les clics du PC en coordonnées du téléphone. */
+    static final class Geometry {
+        final int videoW, videoH, displayW, displayH;
+
+        Geometry(int videoW, int videoH, int displayW, int displayH) {
+            this.videoW = videoW;
+            this.videoH = videoH;
+            this.displayW = displayW;
+            this.displayH = displayH;
+        }
+    }
 
     private final Options opt;
     private final OutputStream out;
+    private volatile Geometry geometry;
     private final Object writeLock = new Object();
     private byte[] buf = new byte[1 << 20];
 
@@ -38,6 +54,11 @@ final class VideoStreamer {
         stop = true;
     }
 
+    /** Dernière géométrie annoncée (null avant le démarrage). */
+    Geometry geometry() {
+        return geometry;
+    }
+
     void requestKeyframe() {
         keyframeRequested = true;
     }
@@ -47,17 +68,48 @@ final class VideoStreamer {
     }
 
     // ------------------------------------------------------------------ boucle principale
-    /** Boucle jusqu'à l'arrêt demandé ou une erreur. `first` : état déjà annoncé dans le « bonjour ». */
+    /**
+     * Boucle jusqu'à l'arrêt demandé. `first` : état déjà annoncé dans le « bonjour ».
+     *
+     * Un incident de l'encodeur ou de la capture (typiquement quand un film démarre : le décodeur matériel du
+     * téléphone peut reprendre des ressources à l'encodeur, ou la capture est brièvement refusée) ne coupe plus la
+     * session : on relance l'encodage après une courte pause. Au-delà de MAX_RESTARTS incidents en
+     * RESTART_WINDOW_MS, l'erreur est transmise (le PC l'affiche). Une coupure du PC (IOException) arrête tout.
+     */
     void run(DisplayAccess.State first, int[] firstVideoSize) throws Exception {
         DisplayAccess.State state = first;
         int[] vs = firstVideoSize;
         boolean announced = true;
+        int failures = 0;
+        long windowStart = System.currentTimeMillis();
         while (!stop) {
             if (!announced) {
                 sendSize(vs[0], vs[1], state.rotation);
             }
             announced = false;
-            boolean changed = encodeSession(state, vs);
+            boolean changed;
+            try {
+                changed = encodeSession(state, vs);
+            } catch (IOException pcGone) {
+                throw pcGone;
+            } catch (Exception e) {
+                long now = System.currentTimeMillis();
+                if (now - windowStart > RESTART_WINDOW_MS) {
+                    windowStart = now;
+                    failures = 0;
+                }
+                failures++;
+                Server.log("Incident de l'encodeur (" + failures + "/" + MAX_RESTARTS + ") : " + DisplayAccess.describe(e));
+                if (failures >= MAX_RESTARTS) throw e;
+                sendMessage("Reprise de l'affichage après une interruption…", false);
+                try {
+                    Thread.sleep(RESTART_PAUSE_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                changed = true;
+            }
             if (!changed) break;
             state = DisplayAccess.query();
             vs = videoSize(state, opt.maxShortSide);
@@ -119,6 +171,7 @@ final class VideoStreamer {
                 vs[1] = used[1];
                 sendSize(vs[0], vs[1], state.rotation);
             }
+            geometry = new Geometry(vs[0], vs[1], state.width, state.height);
             capture = DisplayAccess.start(surface, state, vs[0], vs[1]);
             Server.log("Capture démarrée (" + capture.method() + ") " + vs[0] + "x" + vs[1] + " " + opt.codec
                     + " " + opt.bitrateMbps + " Mb/s " + opt.fps + " i/s");
@@ -245,6 +298,15 @@ final class VideoStreamer {
             data.limit(info.offset + info.size);
             data.get(buf, Wire.HEADER_SIZE, info.size);
             out.write(buf, 0, total);
+            out.flush();
+        }
+    }
+
+    /** Envoi d'un paquet quelconque (son...) ; partage le même verrou d'écriture que la vidéo. */
+    void sendPacket(int type, int flags, long ptsUs, byte[] data, int length) throws IOException {
+        synchronized (writeLock) {
+            out.write(Wire.header(type, flags, ptsUs, length));
+            out.write(data, 0, length);
             out.flush();
         }
     }

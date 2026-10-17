@@ -126,3 +126,45 @@ def test_java_wire_matches_python(tmp_path):
     assert got["HEADER"] == P.HEADER_STRUCT.pack(P.T_VIDEO, P.F_KEY, 0, 123456789, 4242).hex()
     assert got["SIZE"] == P.pack_size(2400, 1080, 3)[16:].hex()
     assert got["LONGNAME"] == P.pack_hello("é" * 70, "h265", 1, 2, 0).hex()
+    assert got["AUDIOCFG"] == P.pack_audio_config(48000, 2, 16)[16:].hex()
+    assert got["AUDIOHEADER"] == P.pack_audio_config(48000, 2, 16)[:16].hex()
+
+
+# -- contrôle et son -----------------------------------------------------------------------------------------------
+def test_control_commands_have_the_documented_sizes():
+    for raw, t in ((P.pack_touch(P.TOUCH_DOWN, 10, 20, 1080, 2400), P.C_TOUCH),
+                   (P.pack_scroll(1, 2, 1080, 2400, 0, -16), P.C_SCROLL),
+                   (P.pack_key(P.KEY_DOWN, 66, 0), P.C_KEY)):
+        assert raw[0] == t and len(raw) == 1 + P.COMMAND_BODY_SIZE[t]
+
+
+def test_touch_fields_and_clipping():
+    raw = P.pack_touch(P.TOUCH_MOVE, 70000, -5, 1080, 2400)      # hors limites : ramené dans u16
+    assert raw == bytes([P.C_TOUCH, P.TOUCH_MOVE]) + (0xFFFF).to_bytes(2, "big") + (0).to_bytes(2, "big") \
+        + (1080).to_bytes(2, "big") + (2400).to_bytes(2, "big")
+
+
+def test_scroll_is_signed():
+    raw = P.pack_scroll(0, 0, 100, 100, 0, -16)
+    assert int.from_bytes(raw[-2:], "big", signed=True) == -16
+
+
+def test_text_is_length_prefixed_utf8_and_never_cut_in_a_character():
+    assert P.pack_text("é") == bytes([P.C_TEXT, 0, 2]) + "é".encode()
+    long = P.pack_text("é" * 400)
+    n = int.from_bytes(long[1:3], "big")
+    assert n <= P.MAX_TEXT_BYTES and len(long) == 3 + n and long[3:].decode("utf-8") == "é" * (n // 2)
+
+
+def test_audio_config_roundtrip_and_validation():
+    raw = P.pack_audio_config(48000, 2)
+    ptype, flags, _pts, length = P.parse_header(raw[:16])
+    assert ptype == P.T_AUDIO and flags & P.F_CONFIG and length == 8
+    fmt = P.parse_audio_config(raw[16:])
+    assert (fmt.sample_rate, fmt.channels, fmt.bits, fmt.frame_bytes) == (48000, 2, 16, 4)
+    with pytest.raises(P.ProtocolError):
+        P.parse_audio_config(P.AUDIO_CONFIG_STRUCT.pack(48000, 6, 16))
+    with pytest.raises(P.ProtocolError):
+        P.parse_audio_config(b"123")
+    pkt = P.Packet(P.T_AUDIO, P.F_CONFIG, 0, b"")
+    assert pkt.is_audio and pkt.is_audio_config and not pkt.is_config

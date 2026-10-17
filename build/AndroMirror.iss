@@ -2,7 +2,7 @@
 ; Compilation locale : ISCC.exe build\AndroMirror.iss   (après avoir construit dist\AndroMirror.exe)
 
 #define AppName "AndroMirror"
-#define AppVersion "0.2.0"
+#define AppVersion "0.3.0"
 #define AppExe "AndroMirror.exe"
 
 [Setup]

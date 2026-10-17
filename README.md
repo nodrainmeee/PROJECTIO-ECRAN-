@@ -1,14 +1,52 @@
 # AndroMirror
 
 Logiciel Windows (Python 3.12 + PySide6) pour **afficher et contrôler un téléphone Android depuis un PC** via ADB.
-Nom provisoire, version **0.2.0 — étape 2 sur la feuille de route (affichage de l'écran)**.
+Nom provisoire, version **0.3.0 — étapes 1 à 5 de la feuille de route (affichage, contrôle, son)**.
 
-> ⚠️ **État actuel : étapes 1 et 2.** Le logiciel détecte le téléphone et **affiche son écran dans une fenêtre du PC**
-> (mode portrait/paysage automatique, plein écran avec F11, qualité réglable). **Le contrôle à la souris et le son ne
-> sont pas encore là** (étapes suivantes ; les boutons de la barre d'outils sont des emplacements désactivés).
+> ⚠️ **État actuel.** Le logiciel détecte le téléphone, **affiche son écran** (portrait/paysage automatique, plein écran
+> F11, qualité réglable), **se contrôle à la souris et au clavier du PC**, et **envoie le son du téléphone vers l'ordinateur**.
 > Tout a été testé avec un **faux adb** et un **faux téléphone** (tests automatiques) :
-> **rien n'a été essayé sur un vrai téléphone ni sur un vrai Windows par l'auteur de cette étape.** L'étape 2 est la
-> plus risquée du projet : voir « Limites connues » et `TEST-TELEPHONE-ETAPE2.md`.
+> **le contrôle et le son n'ont jamais été essayés sur un vrai téléphone**, et l'affichage seulement par un premier retour
+> d'essai (coupures pendant un film, corrigées en 0.3.0 par la reprise automatique de l'encodeur, à confirmer).
+> Voir « Limites connues » et `TEST-TELEPHONE-ETAPE3.md`.
+
+## Ce que fait l'étape 3 (contrôle depuis le PC)
+
+- **Souris** : clic gauche = toucher ; glisser = balayage ; **clic droit = Retour** ; **clic molette = Accueil** ;
+  **molette = défilement** (avec zoom d'écran du téléphone fidèle : les clics sont convertis en pixels du téléphone, et
+  ignorés sur les bandes noires de la fenêtre).
+- **Clavier** : les lettres, chiffres et signes sont saisis comme du texte ; **Entrée, Retour arrière, Suppr, Tab, flèches,
+  Début/Fin, Page précédente/suivante** sont envoyés comme touches. Les raccourcis Ctrl + lettre du PC sont ignorés (AltGr
+  fonctionne : `@`, `#`, `€`...).
+- **Barre d'outils** : ◀ Retour, ● Accueil, ■ Applications récentes, Vol −, Vol +, ⏻ Verrouiller / allumer l'écran.
+- **Interrupteur « Contrôle »** : décoché, la souris et le clavier ne touchent plus au téléphone (pratique pour regarder un
+  film sans risque de toucher l'écran) ; le double-clic sur l'image redevient « plein écran ».
+- **Sécurité** : seule la souris sur l'image du téléphone commande le téléphone ; si la fenêtre perd le focus en plein
+  glissé, le « doigt » est relevé ; désactiver le contrôle relâche toutes les touches maintenues.
+- Le serveur Android injecte les événements par une **API Android cachée** (`InputManager.injectInputEvent`, autorisée à l'identité
+  `shell`). Si elle est refusée, l'image continue et un message l'explique.
+
+## Ce que fait l'étape 5 (son sur le PC)
+
+- Le téléphone capture son **son interne** (pas le micro) en **PCM 16 bits, 48 kHz, stéréo** et l'envoie sur la même
+  connexion ; le PC le joue via **PortAudio (bibliothèque `sounddevice`)** avec une petite file d'attente (~80 ms) :
+  retard rattrapé en jetant les plus vieux échantillons, silence en cas de coupure.
+- **Le haut-parleur du téléphone reste muet** pendant le transfert : c'est la conséquence de la méthode de capture (source
+  « REMOTE_SUBMIX »), pas un réglage.
+- **Android 11 ou plus récent** obligatoire. Certaines applications interdisent la capture de leur son.
+- **Volume** réglable dans Réglages → Audio, **appliqué tout de suite** pendant l'affichage. Le son se désactive dans les mêmes
+  réglages (effet à la connexion suivante).
+- Si le son n'a pas pu démarrer (Android trop ancien, pas de carte son...), un message l'explique et **l'image continue**.
+
+## Stabilité (0.3.0)
+
+Premier retour d'essai : l'affichage se coupait en boucle, surtout au lancement d'un film. Corrections apportées (la
+cause exacte n'est **pas confirmée** : il faut le journal de l'essai) :
+- **Serveur Android** : un incident de l'encodeur ou de la capture (par exemple quand le décodeur matériel du téléphone
+  reprend des ressources pour lire le film) **ne coupe plus la session** : l'encodage est relancé (jusqu'à 5 fois en 20 s) et
+  le PC affiche « Reprise de l'affichage… ». Chaque incident est écrit dans le journal.
+- **PC** : si `adb devices` a un raté passager alors que l'image arrive toujours, l'affichage **n'est plus fermé** (le flux
+  prouve que le téléphone est là) ; adb **n'est plus redémarré** pendant un affichage en cours.
 
 ## Ce que fait l'étape 2 (affichage)
 
@@ -35,8 +73,9 @@ Nom provisoire, version **0.2.0 — étape 2 sur la feuille de route (affichage 
   capture (certaines applications bancaires, vidéos sous DRM comme les services de streaming) apparaissent **en noir**.
   AndroMirror ne contourne pas ces protections.
 
-Ce que l'étape 2 **ne fait pas** : contrôle souris/clavier, son, Wi-Fi, option « garder l'écran du téléphone éteint » (réglage
-sauvegardé mais sans effet), enregistrement.
+Ce que l'ensemble **ne fait pas encore** : Wi-Fi (appairage), copier-coller PC ↔ téléphone, saisie des caractères accentués
+(é, è, à... : voir les limites), option « garder l'écran du téléphone éteint » (réglage sauvegardé mais sans effet), choix de la
+sortie audio, zoom à deux doigts, enregistrement.
 
 ## Ce que fait l'étape 1 (rappel)
 
@@ -70,8 +109,8 @@ AndroMirror/
 │  ├─ ui/                      fenêtre principale, assistant, réglages, thèmes  ← étape 1
 │  │  └─ display_window.py, display_manager.py   fenêtre d'affichage, plein écran  ← étape 2
 │  ├─ video/                   protocole, récepteur, décodeur PyAV, file à faible latence, OpenGL  ← étape 2
-│  ├─ audio/                   (réservé) son du téléphone vers le PC
-│  ├─ control/                 (réservé) souris, clavier, boutons système
+│  ├─ audio/                   lecteur du son du téléphone (PortAudio, file d'attente, volume)  ← étape 5
+│  ├─ control/                 souris, clavier, boutons système (conversion en commandes, sans Qt)  ← étape 3
 │  ├─ settings.py              réglages JSON (validation, sauvegarde atomique)
 │  ├─ logging_setup.py         journal d'erreurs
 │  └─ paths.py                 chemins (ressources, dossier utilisateur)
@@ -81,7 +120,8 @@ AndroMirror/
 ├─ tools/                      captures d'écran (faux téléphone) et contrôle de licence FFmpeg
 ├─ assets/                     icône
 ├─ third_party/                avis de licences des composants tiers
-├─ TEST-TELEPHONE-ETAPE2.md    liste de vérification à faire avec un vrai téléphone
+├─ TEST-TELEPHONE-ETAPE2.md    vérification de l'affichage avec un vrai téléphone
+├─ TEST-TELEPHONE-ETAPE3.md    stabilité, contrôle et son avec un vrai téléphone (À FAIRE EN PREMIER)
 └─ .github/workflows/build.yml construction du .exe sur GitHub
 ```
 
@@ -144,9 +184,20 @@ Construction locale : `build/build_local.ps1` (voir l'en-tête du fichier).
 - **PyAV** (licence BSD 3 clauses) et **FFmpeg** — AndroMirror embarque la roue officielle `av` 19.0.1 (PyAV), qui contient FFmpeg (libavcodec 63.1) sous forme de DLL. FFmpeg est sous **LGPL** ; libavcodec de cette roue se déclare « **LGPL version 3 or later** ». **Point d'attention (vérifié sur la roue Windows et la roue Linux)** : cette roue contient aussi **libx264 et libx265, qui sont sous GPL v2 ou ultérieure**, ainsi que d'autres bibliothèques (dav1d, libvpx, opus, SVT-AV1, libwebp, GnuTLS/Nettle/GMP...). **AndroMirror n'utilise aucun encodeur** (il ne fait que décoder le H.264/H.265 reçu du téléphone, avec les décodeurs natifs de FFmpeg), mais **les fichiers GPL sont livrés dans le `.exe`**. Pour un **usage personnel sans distribution**, la GPL n'impose rien ; **si vous diffusez le `.exe` à d'autres personnes**, il faut soit respecter la GPL pour l'ensemble (publier le code source complet d'AndroMirror sous une licence compatible et proposer les sources de FFmpeg/x264/x265), soit **remplacer la roue PyAV par une version construite avec un FFmpeg sans GPL** (`python tools/check_ffmpeg_license.py --strict` le vérifie). Voir `third_party/AVIS-LICENCES.txt`. Ce n'est pas un avis juridique.
 - AndroMirror n'est pas affilié à Google. « Android » est une marque de Google LLC.
 
-## Limites connues (étapes 1 et 2)
+## Limites connues (étapes 1 à 5)
 
-- **Jamais essayé sur un vrai téléphone ni sur un vrai Windows par l'auteur.** Les parties les plus risquées, dans l'ordre :
+- **Contrôle et son : jamais essayés sur un vrai téléphone.** Risques propres à ces étapes :
+  - **Saisie de texte** : elle passe par le clavier virtuel Android (`KeyCharacterMap`) ; les caractères sans touche
+    correspondante (souvent les **lettres accentuées**) sont **ignorés** (une ligne du journal le dit). Le copier-coller n'est pas fait.
+  - **Injection d'événements** : API cachée ; selon la version d'Android ou la marque, elle peut être refusée (message affiché).
+    Certaines marques demandent d'activer en plus un réglage de sécurité (Xiaomi/Redmi/POCO : « Débogage USB (paramètres de
+    sécurité) » ; Samsung/Oppo : rien en général).
+  - **Son** : API cachées (`REMOTE_SUBMIX`, `AudioRecord.Builder.setContext`) ; sur **Android 11** une activité vide est démarrée un
+    instant pour que la capture soit autorisée. Latence et synchronisation image/son non mesurées (le son n'est pas
+    synchronisé image par image : lecture « au fil de l'eau », écart attendu d'environ 100 ms).
+  - Défilement **horizontal** à la molette : non envoyé.
+- **L'affichage seul a eu un premier retour** (coupures pendant un film, voir « Stabilité »). Le reste, jamais essayé sur un
+  vrai téléphone ni sur un vrai Windows par l'auteur. Les parties les plus risquées, dans l'ordre :
   1. **Les API Android cachées** du serveur (`SurfaceControl`, `DisplayManagerGlobal`, `DisplayManager`) : leur forme change selon la
      version d'Android et la marque ; la méthode de secours pour Android 14+ est la moins sûre. Voir `server_android/README.md`.
   2. **Les différences entre marques** (Samsung, Xiaomi, Tecno, Infinix, Huawei/Honor…) : encodeurs MediaCodec, profils H.264, réglages de
@@ -155,7 +206,7 @@ Construction locale : `build/build_local.ps1` (voir l'en-tête du fichier).
   4. **Le rendu OpenGL** réel (testé seulement en rendu logiciel hors écran).
   5. Les performances en **4K / 60 images/s** (conversion couleur et copie en mémoire côté PC ; aucune mesure sur un vrai PC).
 - **Contenus protégés** (DRM, applications sensibles) : image noire, c'est voulu.
-- **USB uniquement** : la connexion Wi-Fi (appairage) n'est pas faite.
+- **USB uniquement** : la connexion Wi-Fi (appairage) n'est pas faite (étape 6).
 - **Un seul téléphone** géré à la fois ; s'il y en a plusieurs, le premier prêt est utilisé (un message l'indique).
 - Sous Windows, certains téléphones peuvent demander le pilote USB du constructeur.
 - Le `.exe` n'est **pas signé** : Windows SmartScreen peut afficher un avertissement au premier lancement. Il est lourd (~100 Mo) car il contient Qt et FFmpeg.
@@ -164,9 +215,9 @@ Construction locale : `build/build_local.ps1` (voir l'en-tête du fichier).
 
 ## Feuille de route
 
-1. **Étape 1** : connexion, détection, interface de base, réglages, build.
-2. **Étape 2 (ici)** : serveur Android (Java, MediaCodec), flux vidéo, décodage PyAV, affichage OpenGL, orientation, plein écran, réglages de qualité.
-3. Contrôle (souris, clavier, boutons système).
-4. Audio (Android 11+).
-5. Wi-Fi (appairage), reconnexion automatique complète.
-6. Finalisation : tests multi-téléphones, installateur, manuels.
+1. **Étape 1** : connexion, détection, interface de base, réglages, build. ✔
+2. **Étape 2** : serveur Android (Java, MediaCodec), flux vidéo, décodage PyAV, affichage OpenGL, orientation, plein écran, qualité. ✔ (1er retour d'essai : voir « Stabilité »)
+3. **Étape 3** : contrôle (souris, clavier, boutons système). ✔ (non essayé sur téléphone)
+4. **Étape 5** : son sur le PC (Android 11+). ✔ (non essayé sur téléphone)
+5. **Étape 6** : Wi-Fi (appairage), reconnexion automatique complète. ☐
+6. **Finalisation** : tests multi-téléphones, copier-coller, accents, installateur, manuels. ☐

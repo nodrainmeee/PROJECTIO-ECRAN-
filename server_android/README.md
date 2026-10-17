@@ -1,4 +1,4 @@
-# server_android — serveur Android d'AndroMirror (étape 2)
+# server_android — serveur Android d'AndroMirror (affichage, contrôle, son)
 
 Petit programme **Java écrit pour AndroMirror** (aucun code de scrcpy ni d'un autre logiciel de miroir n'a été copié ;
 la technique générale — programme lancé par `adb shell`, copie de l'écran par des API Android internes, encodage MediaCodec —
@@ -10,9 +10,11 @@ est celle de tous les logiciels de ce genre). Il n'est **pas installé** comme u
 | Fichier | Rôle |
 |---|---|
 | `src/com/andromirror/server/Server.java` | `main` : écoute sur un socket local abstrait, vérifie le jeton, envoie le flux, s'arrête quand le PC se déconnecte, supprime le `.jar` |
-| `.../VideoStreamer.java` | encodage MediaCodec (H.264 / H.265), détection des changements de taille/rotation, envoi des paquets |
+| `.../VideoStreamer.java` | encodage MediaCodec (H.264 / H.265), détection des changements de taille/rotation, envoi des paquets (partagé avec le son : un seul verrou d'écriture) ; **relance l'encodeur après un incident** (5 fois max en 20 s) |
 | `.../DisplayAccess.java` | **accès à l'écran par réflexion (API cachées)** : lecture de la taille/rotation, copie de l'écran (méthodes A puis B) |
-| `.../FakeContext.java` | contexte « com.android.shell » minimal, uniquement pour la méthode de secours B |
+| `.../FakeContext.java` | contexte « com.android.shell » minimal : méthode de secours B de la capture d'écran et capture du son |
+| `.../InputInjector.java` | **contrôle** : toucher, molette, touches, texte injectés par `InputManager.injectInputEvent` (API cachée, réflexion) ; convertit les coordonnées de la vidéo en pixels de l'écran, ignore un événement si la taille de la vidéo a changé |
+| `.../AudioStreamer.java` | **son** : `AudioRecord` (source REMOTE_SUBMIX) → PCM 16 bits 48 kHz stéréo ; Android 11+ ; contournement Android 11 (activité vide de `com.android.shell`) |
 | `.../Wire.java` | format des messages (sans dépendance à Android ; comparé octet par octet au code Python par un test) |
 | `.../Options.java` | arguments `clé=valeur` reçus du PC (valeurs invalides → valeurs sûres) |
 | `test/WireSelfTest.java` | affiche les messages de `Wire` en hexadécimal (test sur JDK de bureau) |
@@ -66,3 +68,11 @@ Autres réserves :
   prévient le PC (paquet « taille »). Il peut y avoir un bref saut d'image.
 - **Un identifiant « shell »** : le serveur tourne avec les droits du shell ADB (uid 2000) et seulement le temps de la session.
 - Android < 8 : non pris en charge (le PC l'indique). Le son n'est pas géré à cette étape.
+
+## Protocole (extrait ; miroir exact dans `andromirror/video/protocol.py`)
+
+- Serveur → PC : paquets `T_VIDEO` (1), `T_SIZE` (2), `T_MESSAGE` (3), `T_AUDIO` (4, PCM ; avec `F_CONFIG` : fréquence u32, canaux u16, bits u16).
+- PC → serveur : un octet de type puis un corps de taille fixe — `C_REQUEST_KEYFRAME` (1), `C_QUIT` (2), `C_TOUCH` (3 : action, x, y, largeur, hauteur de la vidéo),
+  `C_SCROLL` (4), `C_KEY` (5 : action, code Android, méta), `C_TEXT` (6 : longueur u16 + UTF-8, 300 octets max).
+  Un type inconnu arrête la lecture des commandes (désynchronisation) : la session se termine proprement.
+- Les messages `T_MESSAGE` non fatals servent à prévenir le PC sans couper l'image (contrôle indisponible, son non démarré, « reprise de l'affichage »).

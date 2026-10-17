@@ -1,4 +1,4 @@
-"""Envoi, lancement et nettoyage du serveur Android (étape 2).
+"""Envoi, lancement et nettoyage du serveur Android (étapes 2 à 5 : image, contrôle, son).
 
 Étapes (toutes par adb, sur le téléphone branché en USB) :
   1. adb push   : copie andromirror-server.jar dans /data/local/tmp (nom unique par session) ;
@@ -46,11 +46,13 @@ def server_args(settings: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
     """Réglages de qualité de l'utilisateur -> arguments du serveur."""
     q = settings["quality"]
     res = q["resolution"]
+    forward_audio = bool(settings.get("audio", {}).get("forward_audio", False))
     return {
         "codec": q["codec"],
         "bitrate": str(int(q["bitrate_mbps"])),
         "fps": str(int(q["fps"])),
         "max_short": "0" if res == "native" else str(int(res)),
+        "audio": "1" if forward_audio else "0",
     }
 
 

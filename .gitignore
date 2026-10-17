@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+build/work/
+dist/
+*.spec.bak
+platform-tools/
+pt.zip
+pt/
+server_android/build/

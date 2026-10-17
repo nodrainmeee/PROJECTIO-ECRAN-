@@ -113,7 +113,9 @@ class ConnectionWorker(QObject):
         if error:
             self._failures += 1
             log.warning("Détection impossible (%d de suite) : %s", self._failures, error)
-            if self._failures >= KILL_SERVER_AFTER_FAILURES and not self._killed_in_streak:
+            # Jamais pendant une session dont le téléphone est présent : redémarrer adb coupe l'affichage en cours.
+            streaming = self._session and not self._lost
+            if self._failures >= KILL_SERVER_AFTER_FAILURES and not self._killed_in_streak and not streaming:
                 self._killed_in_streak = True
                 log.warning("Redémarrage du serveur adb")
                 adb.kill_server()

@@ -2,6 +2,8 @@ package com.andromirror.server;
 
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.pm.ApplicationInfo;
+import android.os.Build;
 import android.os.Looper;
 
 import java.lang.reflect.Constructor;
@@ -11,7 +13,8 @@ import java.lang.reflect.Field;
  * Contexte Android minimal pour un programme lancé par `adb shell` (aucune application installée).
  * Il se présente comme le paquet « com.android.shell » (le vrai propriétaire de l'uid shell), sinon
  * Android refuse certains appels (« le nom du paquet ne correspond pas à l'uid »).
- * Utilisé uniquement par la méthode de secours B de DisplayAccess. Très dépendant de la version d'Android.
+ * Utilisé par la méthode de secours B de DisplayAccess et par la capture du son. Très dépendant de la version
+ * d'Android.
  */
 final class FakeContext extends ContextWrapper {
     static final String PACKAGE = "com.android.shell";
@@ -68,9 +71,30 @@ final class FakeContext extends ContextWrapper {
         Field system = at.getDeclaredField("mSystemThread");
         system.setAccessible(true);
         system.setBoolean(thread, true);
+        if (Build.VERSION.SDK_INT <= 30) fillAppInfo(at, thread);   // Android 11 : la capture du son en a besoin
         Context base = (Context) at.getDeclaredMethod("getSystemContext").invoke(thread);
         cached = new FakeContext(base);
         return cached;
+    }
+
+    /** Android 11 : déclare une « application liée » (paquet com.android.shell), sinon AudioRecord échoue. */
+    private static void fillAppInfo(Class<?> activityThread, Object thread) {
+        try {
+            Class<?> bindData = Class.forName("android.app.ActivityThread$AppBindData");
+            Constructor<?> c = bindData.getDeclaredConstructor();
+            c.setAccessible(true);
+            Object data = c.newInstance();
+            ApplicationInfo info = new ApplicationInfo();
+            info.packageName = PACKAGE;
+            Field appInfo = bindData.getDeclaredField("appInfo");
+            appInfo.setAccessible(true);
+            appInfo.set(data, info);
+            Field bound = activityThread.getDeclaredField("mBoundApplication");
+            bound.setAccessible(true);
+            bound.set(thread, data);
+        } catch (Exception e) {
+            Server.log("FakeContext : informations d'application non définies : " + DisplayAccess.describe(e));
+        }
     }
 
     /** Un DisplayManager qui utilise ce contexte. */

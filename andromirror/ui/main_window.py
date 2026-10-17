@@ -285,6 +285,10 @@ class MainWindow(QMainWindow):
         self.dot.setStyleSheet(f"background: {color}; border-radius: 8px;")
 
     def _on_lost(self, serial: str) -> None:
+        if self.display.stream_alive():
+            # adb ne répond plus correctement mais l'image arrive toujours : le téléphone est bien là
+            log.warning("adb ne voit plus le téléphone %s, mais le flux arrive encore : coupure ignorée", serial)
+            return
         self.statusBar().showMessage("Téléphone débranché.", 6000)
         # l'affichage est fermé proprement ; il reprendra tout seul au rebranchement (reconnexion automatique)
         self.display.stop("Téléphone débranché : l'affichage a été fermé. Rebranchez-le pour reprendre.")

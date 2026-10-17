@@ -6,6 +6,7 @@ synthétiques (synth.py), et enregistre les commandes reçues (images clés dema
 from __future__ import annotations
 
 import socket
+import struct
 import threading
 import time
 from typing import List, Optional, Sequence, Tuple
@@ -19,7 +20,7 @@ class FakeServer:
                  frames_per_size: int = 20, fps: int = 60, expected_token: Optional[bytes] = None,
                  name: str = "Fake Phone", bad_magic: bool = False, fatal_message: str = "",
                  drop_after: Optional[int] = None, stall_after: Optional[int] = None,
-                 keep_open: bool = True, refuse_first: int = 0, keyint: int = 10):
+                 keep_open: bool = True, refuse_first: int = 0, keyint: int = 10, audio_chunks: int = 0):
         self.sizes, self.codec, self.fps = list(sizes), codec, fps
         self.frames_per_size = frames_per_size
         self.expected_token = expected_token
@@ -28,6 +29,9 @@ class FakeServer:
         self.keep_open = keep_open          # reste connecté après le dernier paquet (comme un vrai téléphone)
         self.refuse_first = refuse_first    # ferme tout de suite les N premières connexions (serveur pas prêt)
         self.keyint = keyint
+        self.audio_chunks = audio_chunks        # nombre de paquets de son de 20 ms envoyés après le « bonjour »
+        self.commands: List[bytes] = []         # commandes de contrôle reçues (touch, scroll, key, text), complètes
+        self.bad_commands = 0
         self.received_token: Optional[bytes] = None
         self.keyframe_requests = 0
         self.quit_received = False
@@ -76,21 +80,41 @@ class FakeServer:
                 self.client_closed.set()
 
     def _read_commands(self, conn: socket.socket) -> None:
+        """Lit les commandes du PC comme le vrai serveur : un octet de type puis un corps de taille connue."""
         conn.settimeout(0.2)
+        buf = bytearray()
         while not self._stop.is_set() and not self.client_closed.is_set():
             try:
-                b = conn.recv(16)
+                b = conn.recv(256)
             except socket.timeout:
                 continue
             except OSError:
                 break
             if not b:
                 break
-            for byte in b:
-                if byte == P.C_REQUEST_KEYFRAME:
+            buf += b
+            while buf:
+                t = buf[0]
+                if t == P.C_TEXT:
+                    if len(buf) < 3:
+                        break
+                    size = 3 + struct.unpack(">H", bytes(buf[1:3]))[0]
+                elif t in P.COMMAND_BODY_SIZE:
+                    size = 1 + P.COMMAND_BODY_SIZE[t]
+                else:
+                    self.bad_commands += 1          # désynchronisation : le vrai serveur arrête la lecture
+                    buf.clear()
+                    break
+                if len(buf) < size:
+                    break
+                cmd = bytes(buf[:size])
+                del buf[:size]
+                if t == P.C_REQUEST_KEYFRAME:
                     self.keyframe_requests += 1
-                elif byte == P.C_QUIT:
+                elif t == P.C_QUIT:
                     self.quit_received = True
+                else:
+                    self.commands.append(cmd)
         self.client_closed.set()
 
     def _handle(self, conn: socket.socket) -> None:
@@ -111,6 +135,11 @@ class FakeServer:
             return
         conn.sendall(P.pack_hello(self.name, self.codec, first[0], first[1], 0))
         threading.Thread(target=self._read_commands, args=(conn,), daemon=True).start()
+        if self.audio_chunks:
+            conn.sendall(P.pack_audio_config(48000, 2))
+            pcm = struct.pack("<hh", 1000, -1000) * 960         # 20 ms de signal
+            for i in range(self.audio_chunks):
+                conn.sendall(P.pack_audio(i * 20000, pcm))
         sent = 0
         for idx, (w, h) in enumerate(self.sizes):
             if idx > 0:

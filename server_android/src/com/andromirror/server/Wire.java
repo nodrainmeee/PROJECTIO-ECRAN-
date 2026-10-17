@@ -26,6 +26,7 @@ public final class Wire {
     public static final int T_VIDEO = 1;    // données encodées
     public static final int T_SIZE = 2;     // changement de taille / rotation (12 octets : largeur, hauteur, rotation)
     public static final int T_MESSAGE = 3;  // texte UTF-8 (indicateur FATAL = erreur qui arrête la session)
+    public static final int T_AUDIO = 4;    // son PCM 16 bits ; avec F_CONFIG : format (fréquence u32, canaux u16, bits u16)
 
     public static final int F_CONFIG = 1;   // T_VIDEO : paramètres du codec (SPS/PPS...)
     public static final int F_KEY = 2;      // T_VIDEO : image clé
@@ -34,6 +35,13 @@ public final class Wire {
     // Messages PC -> serveur (1 octet chacun)
     public static final int C_REQUEST_KEYFRAME = 1;
     public static final int C_QUIT = 2;
+    // Commandes de contrôle : un octet de type puis un corps de taille fixe (sauf C_TEXT : longueur u16 + UTF-8)
+    public static final int C_TOUCH = 3;    // action u8, x u16, y u16, largeur u16, hauteur u16 (de la vidéo)
+    public static final int C_SCROLL = 4;   // x u16, y u16, largeur u16, hauteur u16, défil. horizontal i16, vertical i16
+    public static final int C_KEY = 5;      // action u8 (0 appui, 1 relâché), code Android u32, méta u32
+    public static final int C_TEXT = 6;     // longueur u16 puis texte UTF-8
+    public static final int MAX_TEXT_BYTES = 300;
+    public static final int SCROLL_UNITS_PER_NOTCH = 16;   // un cran de molette = 16 unités
 
     public static final int TOKEN_SIZE = 16;
 
@@ -63,6 +71,10 @@ public final class Wire {
         byte[] h = new byte[HEADER_SIZE];
         putHeader(h, type, flags, ptsUs, length);
         return h;
+    }
+
+    public static byte[] audioConfig(int sampleRate, int channels, int bits) {
+        return ByteBuffer.allocate(8).putInt(sampleRate).putShort((short) channels).putShort((short) bits).array();
     }
 
     public static byte[] sizePayload(int width, int height, int rotation) {

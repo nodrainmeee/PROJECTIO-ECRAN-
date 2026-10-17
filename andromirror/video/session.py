@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from PySide6.QtCore import QObject, Signal
 
 from ..connection.adb import AdbClient
+from ..audio.player import AudioPlayer
 from ..connection.server_launcher import LaunchError, RunningServer, ServerLauncher
 from ..logging_setup import get_logger
 from . import protocol as P
@@ -34,7 +35,8 @@ class ScreenSession(QObject):
     ended = Signal(object)                    # EndInfo
 
     def __init__(self, adb: Optional[AdbClient], serial: str, settings: Dict[str, Dict[str, Any]],
-                 launcher_factory: Optional[Callable[[], Any]] = None, parent: Optional[QObject] = None):
+                 launcher_factory: Optional[Callable[[], Any]] = None, parent: Optional[QObject] = None,
+                 audio_factory: Optional[Callable[..., AudioPlayer]] = None):
         super().__init__(parent)
         self.adb, self.serial, self.settings = adb, serial, settings
         self._launcher_factory = launcher_factory or (lambda: ServerLauncher(adb, serial, settings))
@@ -44,6 +46,8 @@ class ScreenSession(QObject):
         self._worker: Optional[DecodeWorker] = None
         self._queue: Optional[PacketQueue] = None
         self._latest = LatestFrame()
+        self._audio: Optional[AudioPlayer] = None
+        self._audio_factory = audio_factory or AudioPlayer
         self._target: Tuple[int, int] = (0, 0)
         self._error: Optional[str] = None
         self._end_sent = False
@@ -70,6 +74,20 @@ class ScreenSession(QObject):
             rx.stop()
         if wait and self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(timeout)
+
+    def send_command(self, data: bytes) -> None:
+        """Commande de contrôle vers le téléphone (voir control/controller.py). Sans effet hors session."""
+        rx = self._receiver
+        if rx is not None:
+            rx.send_command(data)
+
+    def set_volume(self, percent: int) -> None:
+        if self._audio is not None:
+            self._audio.set_volume(percent)
+
+    @property
+    def audio_active(self) -> bool:
+        return self._audio is not None and self._audio.active
 
     def take_frame(self) -> Optional[DecodedFrame]:
         return self._latest.take()
@@ -133,6 +151,11 @@ class ScreenSession(QObject):
             self._worker.stop()
         if self._queue is not None:
             self._queue.close()
+        if self._audio is not None:
+            try:
+                self._audio.stop()
+            except Exception:  # noqa: BLE001
+                log.exception("Arrêt du son incomplet")
         if launcher is not None:
             try:
                 launcher.cleanup()
@@ -165,11 +188,32 @@ class ScreenSession(QObject):
             on_error=self._on_decoder_error)
         self._worker.stats.width, self._worker.stats.height = h.width, h.height
         self._worker.start()
+        audio_cfg = self.settings.get("audio", {})
+        if audio_cfg.get("forward_audio", False):
+            self._audio = self._audio_factory(int(audio_cfg.get("volume", 100)))
         self.hello.emit(h)
 
     def _on_packet(self, pkt: P.Packet) -> None:
+        if pkt.is_audio:
+            self._on_audio(pkt)
+            return
         if self._queue is not None:
             self._queue.put(pkt)
+
+    def _on_audio(self, pkt: P.Packet) -> None:
+        player = self._audio
+        if player is None:
+            return                       # son désactivé dans les réglages (le serveur ne devrait rien envoyer)
+        if pkt.is_audio_config:
+            try:
+                fmt = P.parse_audio_config(pkt.payload)
+            except P.ProtocolError as exc:
+                self.server_message.emit(f"Le son du téléphone n'est pas utilisable : {exc}", False)
+                return
+            if not player.start(fmt):
+                self.server_message.emit(player.error + " L'image continue sans le son.", False)
+            return
+        player.push(pkt.payload)
 
     def _on_decoder_error(self, message: str) -> None:
         self._error = message

@@ -13,6 +13,7 @@ final class Options {
     final int maxShortSide;      // 0 = résolution native, sinon plafond du petit côté (720, 1080, 1440, 2160)
     final String jarPath;        // fichier à supprimer en fin de session ("" = rien)
     final int acceptTimeoutSec;  // attente de la connexion du PC
+    final boolean audio;         // envoyer aussi le son du téléphone (Android 11 ou plus)
 
     private Options(Map<String, String> m) {
         token = parseHex(m.get("token"), Wire.TOKEN_SIZE);
@@ -29,6 +30,7 @@ final class Options {
         // on ne supprime que notre propre fichier, jamais autre chose
         jarPath = (jar != null && jar.startsWith("/data/local/tmp/andromirror-server")) && !jar.contains("..") ? jar : "";
         acceptTimeoutSec = clamp(parseInt(m.get("accept_timeout"), 30), 3, 300);
+        audio = "1".equals(m.get("audio"));
     }
 
     static Options parse(String[] args) {

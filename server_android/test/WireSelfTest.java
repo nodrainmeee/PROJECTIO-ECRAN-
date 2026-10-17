@@ -14,6 +14,8 @@ public class WireSelfTest {
         System.out.println("SIZE " + hex(Wire.sizePayload(2400, 1080, 3)));
         StringBuilder longName = new StringBuilder();
         for (int i = 0; i < 70; i++) longName.append('é');
+        System.out.println("AUDIOCFG " + hex(Wire.audioConfig(48000, 2, 16)));
+        System.out.println("AUDIOHEADER " + hex(Wire.header(Wire.T_AUDIO, Wire.F_CONFIG, 0, 8)));
         System.out.println("LONGNAME " + hex(Wire.hello(longName.toString(), "h265", 1, 2, 0)));
     }
 }

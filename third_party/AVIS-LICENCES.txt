@@ -61,6 +61,13 @@ FFmpeg — embarqué dans la roue PyAV (bibliothèques avcodec, avformat, avutil
   GnuTLS / Nettle / GMP (LGPL v3 ou GPL v2), bibliothèques d'exécution GCC/MinGW (libgcc, libstdc++ avec exception de
   licence d'exécution, libwinpthread). Leurs textes de licence : voir le dépôt pyav-ffmpeg.
 
+sounddevice et PortAudio (lecture du son sur le PC)
+  « sounddevice » (python-sounddevice) — Copyright (c) Matthias Geier — licence MIT.
+  Il embarque « PortAudio » (Copyright (c) Ross Bencina et Phil Burk) — licence de type MIT.
+  Textes : https://github.com/spatialaudio/python-sounddevice et https://www.portaudio.com/license.html
+  Utilisés sans modification, uniquement pour lire sur les haut-parleurs du PC le son reçu du téléphone.
+  Ces licences exigent de conserver leur mention de droits d'auteur : c'est l'objet de cet avis.
+
 Serveur Android d'AndroMirror (andromirror-server.jar)
   Écrit pour AndroMirror (code d'AndroMirror, aucun code tiers copié). Compilé avec le JDK et le SDK Android
   (android.jar, d8 — licence Apache 2.0) ; le fichier produit ne contient aucune bibliothèque tierce. Il est envoyé sur le

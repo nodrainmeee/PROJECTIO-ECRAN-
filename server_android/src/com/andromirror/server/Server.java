@@ -4,20 +4,24 @@ import android.net.LocalServerSocket;
 import android.net.LocalSocket;
 import android.os.Build;
 
+import java.io.BufferedInputStream;
+import java.io.DataInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 /**
- * Serveur AndroMirror (étape 2 : affichage). Lancé par le PC avec :
+ * Serveur AndroMirror (affichage, contrôle depuis le PC, son). Lancé par le PC avec :
  *   adb shell CLASSPATH=/data/local/tmp/andromirror-server-XXXX.jar app_process / com.andromirror.server.Server clé=valeur...
  *
  * Déroulement :
  *  1. écoute sur un socket local abstrait au nom aléatoire (le PC y accède via « adb forward ») ;
  *  2. n'accepte que le client qui présente le jeton secret de 16 octets reçu en argument ;
- *  3. envoie le « bonjour » puis le flux vidéo (VideoStreamer) ;
+ *  3. envoie le « bonjour » puis le flux vidéo (VideoStreamer) et, si demandé, le son (AudioStreamer) ;
+ *     exécute les commandes de contrôle du PC (InputInjector) ;
  *  4. s'arrête dès que le PC se déconnecte (ou sur erreur) et supprime son propre fichier .jar.
  *
  * Aucune donnée ne quitte le téléphone autrement que par ce socket local (donc par le câble USB vers le PC).
@@ -162,17 +166,39 @@ public final class Server {
             out.flush();
             log("client connecté ; écran " + state + " -> vidéo " + size[0] + "x" + size[1]);
 
-            // Lecture des messages du PC ; la fin de la connexion arrête tout.
-            final InputStream in = client.getInputStream();
+            // Contrôle depuis le PC : si le système refuse, l'image continue et le PC en est averti.
+            InputInjector injector = null;
+            try {
+                injector = InputInjector.create(vs);
+            } catch (Throwable t) {
+                String msg = "Le contrôle depuis le PC n'est pas disponible sur ce téléphone : " + DisplayAccess.describe(t);
+                log(msg);
+                vs.sendMessage(msg, false);
+            }
+            final InputInjector inj = injector;
+
+            // Son : idem, une panne du son ne coupe jamais l'image.
+            AudioStreamer audioStreamer = null;
+            if (opt.audio) {
+                try {
+                    AudioStreamer as = new AudioStreamer(vs);
+                    as.start();
+                    audioStreamer = as;
+                } catch (Throwable t) {
+                    String msg = "Le son du téléphone n'a pas pu démarrer : " + DisplayAccess.describe(t);
+                    log(msg);
+                    vs.sendMessage(msg, false);
+                }
+            }
+            final AudioStreamer audio = audioStreamer;
+
+            // Lecture des commandes du PC ; la fin de la connexion arrête tout.
+            final DataInputStream in = new DataInputStream(new BufferedInputStream(client.getInputStream()));
             Thread reader = new Thread(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        while (true) {
-                            int b = in.read();
-                            if (b < 0 || b == Wire.C_QUIT) break;
-                            if (b == Wire.C_REQUEST_KEYFRAME) vs.requestKeyframe();
-                        }
+                        readCommands(in, vs, inj);
                     } catch (IOException ignored) {
                         // connexion coupée
                     }
@@ -200,6 +226,60 @@ public final class Server {
                 return 1;
             } finally {
                 vs.requestStop();
+                if (audio != null) audio.stop();
+            }
+        }
+
+        /** Boucle de lecture : un octet de type, puis le corps de la commande. Une commande inconnue arrête la lecture. */
+        private void readCommands(DataInputStream in, VideoStreamer vs, InputInjector inj) throws IOException {
+            while (true) {
+                int type = in.read();
+                if (type < 0 || type == Wire.C_QUIT) return;
+                switch (type) {
+                    case Wire.C_REQUEST_KEYFRAME:
+                        vs.requestKeyframe();
+                        break;
+                    case Wire.C_TOUCH: {
+                        int action = in.readUnsignedByte();
+                        int x = in.readUnsignedShort();
+                        int y = in.readUnsignedShort();
+                        int w = in.readUnsignedShort();
+                        int h = in.readUnsignedShort();
+                        if (inj != null) inj.touch(action, x, y, w, h);
+                        break;
+                    }
+                    case Wire.C_SCROLL: {
+                        int x = in.readUnsignedShort();
+                        int y = in.readUnsignedShort();
+                        int w = in.readUnsignedShort();
+                        int h = in.readUnsignedShort();
+                        int hs = in.readShort();
+                        int vsc = in.readShort();
+                        if (inj != null) inj.scroll(x, y, w, h, hs, vsc);
+                        break;
+                    }
+                    case Wire.C_KEY: {
+                        int action = in.readUnsignedByte();
+                        int code = in.readInt();
+                        int meta = in.readInt();
+                        if (inj != null) inj.key(action, code, meta);
+                        break;
+                    }
+                    case Wire.C_TEXT: {
+                        int len = in.readUnsignedShort();
+                        if (len > Wire.MAX_TEXT_BYTES) {
+                            log("texte trop long (" + len + " octets) : lecture arrêtée");
+                            return;
+                        }
+                        byte[] raw = new byte[len];
+                        in.readFully(raw);
+                        if (inj != null) inj.text(new String(raw, StandardCharsets.UTF_8));
+                        break;
+                    }
+                    default:
+                        log("commande inconnue (" + type + ") : lecture arrêtée");
+                        return;
+                }
             }
         }
     }

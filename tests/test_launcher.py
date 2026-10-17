@@ -25,9 +25,11 @@ def make(phone, jar, **quality):
 
 def test_server_args_from_settings():
     s = defaults()
-    assert server_args(s) == {"codec": "h264", "bitrate": "16", "fps": "60", "max_short": "0"}
+    assert server_args(s) == {"codec": "h264", "bitrate": "16", "fps": "60", "max_short": "0", "audio": "1"}
     s["quality"].update(resolution="1080", bitrate_mbps=40, fps=30, codec="h265")
-    assert server_args(s) == {"codec": "h265", "bitrate": "40", "fps": "30", "max_short": "1080"}
+    assert server_args(s) == {"codec": "h265", "bitrate": "40", "fps": "30", "max_short": "1080", "audio": "1"}
+    s["audio"]["forward_audio"] = False
+    assert server_args(s)["audio"] == "0"
 
 
 def test_start_and_cleanup_issue_the_expected_adb_commands(phone, jar):

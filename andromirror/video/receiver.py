@@ -51,6 +51,11 @@ class StreamReceiver:
     def request_keyframe(self) -> None:
         self._send(bytes([P.C_REQUEST_KEYFRAME]))
 
+    def send_command(self, data: bytes) -> None:
+        """Envoie une commande complète au téléphone (contrôle : P.pack_touch, pack_key...). Sans effet si déconnecté."""
+        if not self._stop.is_set():
+            self._send(data)
+
     @property
     def stopped(self) -> bool:
         return self._stop.is_set()

@@ -72,8 +72,11 @@ class SettingsDialog(QDialog):
         al.setSpacing(12)
         self.forward_audio = QCheckBox("Envoyer le son du téléphone vers l'ordinateur")
         self.forward_audio.setChecked(store.get("audio", "forward_audio"))
-        self.mute_phone = QCheckBox("Couper le haut-parleur du téléphone")
+        self.mute_phone = QCheckBox("Le haut-parleur du téléphone reste muet pendant le transfert")
         self.mute_phone.setChecked(store.get("audio", "mute_phone"))
+        self.mute_phone.setEnabled(False)       # imposé par la méthode de capture, pas un vrai choix
+        self.mute_phone.setToolTip("Le son détourné vers l'ordinateur ne sort plus sur le téléphone : ce n'est "
+                                   "pas réglable dans cette version.")
         self.volume = QSlider(Qt.Orientation.Horizontal)
         self.volume.setRange(0, 100)
         self.volume.setValue(store.get("audio", "volume"))
@@ -86,8 +89,8 @@ class SettingsDialog(QDialog):
         al.addWidget(self.forward_audio)
         al.addWidget(self.mute_phone)
         al.addLayout(vrow)
-        note2 = QLabel("Le transfert audio demande Android 11 ou plus récent. "
-                       "Réglages enregistrés, appliqués à l'étape « audio ».")
+        note2 = QLabel("Le transfert audio demande Android 11 ou plus récent. Le son du téléphone est détourné "
+                       "vers l'ordinateur : c'est ce qui rend le téléphone muet. Le volume se règle pendant l'affichage.")
         note2.setObjectName("muted")
         note2.setWordWrap(True)
         al.addWidget(note2)
