@@ -1,0 +1,70 @@
+AndroMirror — avis sur les composants tiers
+============================================
+
+ADB (Android Debug Bridge) — « Android SDK Platform-Tools »
+  Copyright (c) The Android Open Source Project.
+  Distribué sous licence Apache, version 2.0.
+  Texte de la licence : https://www.apache.org/licenses/LICENSE-2.0
+  AndroMirror embarque adb.exe et ses bibliothèques (AdbWinApi.dll, AdbWinUsbApi.dll)
+  tels que publiés par Google (platform-tools r37.0.1), sans modification.
+  Source : https://developer.android.com/tools/releases/platform-tools
+  Le fichier NOTICE.txt fourni par Google est inclus dans le programme (dossier platform-tools).
+
+PySide6 / Qt for Python (Qt 6) — The Qt Company
+  Copyright (c) The Qt Company Ltd. et contributeurs.
+  Utilisé sous licence GNU Lesser General Public License, version 3 (LGPL v3).
+  Texte de la licence : https://www.gnu.org/licenses/lgpl-3.0.html
+  (complété par la GNU GPL v3 : https://www.gnu.org/licenses/gpl-3.0.html)
+  Code source de Qt : https://code.qt.io/
+  Code source de PySide6 : https://code.qt.io/cgit/pyside/pyside-setup.git
+  PySide6 et Qt sont utilisés sans modification. Ils sont liés dynamiquement à AndroMirror
+  (bibliothèques partagées .dll / .pyd), jamais compilés dans le code d'AndroMirror.
+  L'exécutable AndroMirror.exe est construit avec PyInstaller en mode « un seul fichier » : il
+  embarque les bibliothèques Qt comme fichiers séparés et les extrait dans un dossier temporaire
+  à chaque lancement. Vous avez le droit de remplacer ces bibliothèques par une version modifiée
+  ou plus récente : reconstruisez AndroMirror.exe avec PyInstaller à partir du code source
+  d'AndroMirror et d'une autre version de PySide6 (voir requirements.txt et le README).
+  AndroMirror ne restreint ni la rétro-ingénierie nécessaire pour déboguer de telles
+  modifications, ni le remplacement de ces bibliothèques.
+
+PyAV (liaison Python de FFmpeg) — version 19.0.1
+  Copyright (c) 2013-2024 Mike Boers, Jeremy Lainé et contributeurs PyAV.
+  Distribué sous licence BSD à 3 clauses. Source : https://github.com/PyAV-Org/PyAV
+  AndroMirror embarque la « roue » (wheel) officielle de PyAV, sans modification.
+
+FFmpeg — embarqué dans la roue PyAV (bibliothèques avcodec, avformat, avutil, avfilter, swscale, swresample...)
+  Copyright (c) les auteurs de FFmpeg. Source : https://ffmpeg.org/ ; code source de la version embarquée :
+  https://github.com/PyAV-Org/pyav-ffmpeg (construction des roues).
+  FFmpeg est distribué sous licence GNU LGPL (version 2.1 ou ultérieure ; les composants activés de cette construction
+  imposent la version 3). La bibliothèque libavcodec de la roue se déclare « LGPL version 3 or later ».
+  Utilisation par AndroMirror : décodage du H.264 et du H.265 reçus du téléphone (décodeurs natifs de FFmpeg) et conversion
+  des couleurs. AndroMirror n'encode rien avec FFmpeg et ne modifie pas FFmpeg. Les bibliothèques sont liées dynamiquement
+  (fichiers .dll séparés, extraits dans un dossier temporaire par l'exécutable PyInstaller) : vous pouvez les remplacer en
+  reconstruisant AndroMirror.exe avec une autre version de PyAV (voir requirements.txt).
+
+  POINT D'ATTENTION — composants GPL présents dans la roue (vérifié sur les roues Windows et Linux 19.0.1) :
+    * libx264 (encodeur H.264) — GNU GPL version 2 ou ultérieure — https://www.videolan.org/developers/x264.html
+    * libx265 (encodeur H.265) — GNU GPL version 2 ou ultérieure — https://www.videolan.org/developers/x265.html
+  La roue PyAV est construite avec ces bibliothèques et les livre comme fichiers (libx264-*.dll, libx265-*.dll).
+  AndroMirror ne les appelle jamais, mais elles se trouvent dans le programme livré. Conséquences :
+    - usage personnel, programme non distribué : la GPL n'impose aucune obligation ;
+    - distribution du programme à des tiers : soit se conformer à la GPL pour l'ensemble (code source complet d'AndroMirror
+      et des composants sous une licence compatible, offre de sources), soit remplacer la roue PyAV par une construction de
+      FFmpeg sans composants GPL (« --disable-gpl »). Le script tools/check_ffmpeg_license.py affiche ce que contient la roue
+      et, avec --strict, échoue si des bibliothèques GPL sont présentes.
+  La déclaration « LGPL version 3 or later » de libavcodec et la présence de bibliothèques GPL dans la même roue ne se
+  contredisent pas forcément (libavcodec peut charger ces bibliothèques sans être « GPL » elle-même), mais c'est un point
+  juridique que l'auteur d'AndroMirror n'a pas tranché : à vérifier avant toute diffusion. Ceci n'est pas un avis juridique.
+
+  Autres bibliothèques livrées dans la roue (liste indicative, licences libres) : dav1d (BSD), libvpx (BSD), Opus (BSD),
+  SVT-AV1 (BSD + licence de brevets AOM), libwebp (BSD), libvmaf (BSD + brevets), oneVPL/libvpl (MIT), zlib, libiconv (LGPL),
+  GnuTLS / Nettle / GMP (LGPL v3 ou GPL v2), bibliothèques d'exécution GCC/MinGW (libgcc, libstdc++ avec exception de
+  licence d'exécution, libwinpthread). Leurs textes de licence : voir le dépôt pyav-ffmpeg.
+
+Serveur Android d'AndroMirror (andromirror-server.jar)
+  Écrit pour AndroMirror (code d'AndroMirror, aucun code tiers copié). Compilé avec le JDK et le SDK Android
+  (android.jar, d8 — licence Apache 2.0) ; le fichier produit ne contient aucune bibliothèque tierce. Il est envoyé sur le
+  téléphone pendant la session puis supprimé. Il utilise des API Android non documentées (voir server_android/README.md).
+
+AndroMirror n'est pas affilié à Google ni à Android.
+« Android » est une marque de Google LLC.
