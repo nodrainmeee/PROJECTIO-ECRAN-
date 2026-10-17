@@ -118,7 +118,7 @@ jobs:
           --collect-all av
           main.py
 
-      - name: Verify artifact (auto-test du .exe : adb, FFmpeg, serveur embarqué, affichage)
+            - name: "Verify artifact (auto-test du .exe - adb, FFmpeg, serveur embarqué, affichage)"
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
