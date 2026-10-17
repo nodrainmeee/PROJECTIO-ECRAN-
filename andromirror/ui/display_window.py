@@ -71,10 +71,12 @@ class DisplayWindow(QMainWindow):
         """Si OpenGL n'a pas pu démarrer sur ce PC, passe au rendu logiciel. Retourne True si remplacé."""
         v = self.video
         if isinstance(v, GLVideoWidget) and not v.isValid():
-            message = v.message
+            message, frame = v.message, v._frame
             new = SoftwareVideoWidget(self)
             self.setCentralWidget(new)       # détruit l'ancien widget
             self.video = new
+            if frame is not None:            # la dernière image reste affichée (le remplacement peut avoir lieu en cours de flux)
+                new.set_frame(frame)
             new.set_message(message)
             self._wire_video()
             self.target_changed.emit(*new.target_pixels)

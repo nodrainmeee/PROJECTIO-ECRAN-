@@ -146,7 +146,10 @@ def test_session_fatal_message_from_server(qapp):
     s.start()
     assert pump(qapp, lambda: spy.ended)
     assert spy.ended[0].reason == "fatal_message" and "erreur : X" in spy.ended[0].message
-    assert spy.messages and spy.messages[-1][1] is True
+    # Le texte fatal arrive par `ended` (c'est ce que l'interface affiche). Le signal `server_message` est un doublon émis par le
+    # thread de décodage : si la session se termine avant que ce thread ait traité le paquet (décodeur lent à démarrer, ex. repli
+    # matériel -> logiciel sous Windows), il peut ne pas partir du tout ; s'il part, il doit être marqué fatal.
+    assert all(fatal for _text, fatal in spy.messages)
     srv.close()
 
 
@@ -439,3 +442,25 @@ def test_selftest_runs_and_reports_everything(tmp_path, monkeypatch):
     assert code == 0 and text.startswith("OK"), text
     for key in ("adb=", "fenetre=ok", "pyav=", "decodage ok", "affichage=ok", "serveur="):
         assert key in text, text
+
+
+def test_window_replaces_invalid_opengl_widget_by_software_and_keeps_frame(qapp, monkeypatch):
+    """Windows sans carte graphique / OpenGL cassé : le widget OpenGL invalide est remplacé, sans perdre l'image."""
+    from andromirror.video.widget import GLVideoWidget, SoftwareVideoWidget
+    monkeypatch.setattr(GLVideoWidget, "isValid", lambda self: False)
+    win = DisplayWindow("Test")
+    win.show()
+    qapp.processEvents()
+    if not isinstance(win.video, GLVideoWidget):
+        pytest.skip("ANDROMIRROR_NO_GL ou création OpenGL impossible : déjà en rendu logiciel")
+    from synth import pattern
+    import time as _t
+    from andromirror.video.decoder import DecodedFrame
+    img = pattern(64, 128).convert("RGB")
+    win.video.set_frame(DecodedFrame(64, 128, 64 * 3, img.tobytes(), 0, 64, 128, _t.monotonic(), _t.monotonic()))
+    targets = []
+    win.target_changed.connect(lambda w, h: targets.append((w, h)))
+    assert win.ensure_valid_gl() is True
+    assert isinstance(win.video, SoftwareVideoWidget) and win.video.has_frame and targets
+    assert win.ensure_valid_gl() is False                      # déjà logiciel : rien à faire
+    win.close_programmatically()

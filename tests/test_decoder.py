@@ -137,8 +137,9 @@ def test_hardware_failure_falls_back_to_software(monkeypatch):
     assert dec.hw_name == "fakehw" and "matériel" in dec.description
     chunks = synth.encode("h264", 320, 640, 6, keyint=3)
     cfg = chunks[0].data
-    assert dec.decode(cfg + chunks[1].data) == []          # l'échec est absorbé
+    first = dec.decode(cfg + chunks[1].data)                # l'échec est absorbé, et l'image clé est rejouée en logiciel
     assert dec.hw_name is None and dec.description == "logiciel"
+    assert len(first) == 1
     frames = []
     for c in chunks[2:]:
         if c.flags & 2:
@@ -162,3 +163,86 @@ def test_hardware_disabled_by_setting_and_env(monkeypatch):
     assert VideoDecoder("h264", prefer_hw=False).hw_name is None
     monkeypatch.setenv("ANDROMIRROR_NO_HW", "1")
     assert VideoDecoder("h264", prefer_hw=True).hw_name is None
+
+
+# --------------------------------------------------------------------------- régression Windows (CI) : « données invalides » du matériel
+def _fake_hw(monkeypatch, behaviour):
+    """Accélération « fakehw » annoncée (is_hwaccel vrai) dont decode() est piloté par `behaviour(n)` (n = n° du paquet)."""
+    import av
+    monkeypatch.setattr(D, "hw_candidates", lambda: ["fakehw"])
+    real_make = VideoDecoder._make_context
+    state = {"n": 0}
+
+    class FakeHwCtx:
+        is_hwaccel = True
+
+        def decode(self, pkt):
+            state["n"] += 1
+            return behaviour(state["n"], av)
+
+    def make(self, hw_name):
+        return FakeHwCtx() if hw_name else real_make(self, None)
+    monkeypatch.setattr(VideoDecoder, "_make_context", make)
+    return state
+
+
+def _invalid(av):
+    # exactement l'erreur vue sur windows-latest : AVERROR_INVALIDDATA depuis avcodec_send_packet()
+    return av.error.InvalidDataError(1094995529, "avcodec_send_packet()")
+
+
+def test_hardware_invalid_data_before_any_frame_falls_back_to_software_at_once(monkeypatch):
+    """Sans carte graphique, d3d11va peut s'ouvrir puis refuser tout le flux (données invalides) : jamais d'écran noir."""
+    def always_invalid(n, av):
+        raise _invalid(av)
+    _fake_hw(monkeypatch, always_invalid)
+    dec = VideoDecoder("h264", prefer_hw=True)
+    assert dec.hw_name == "fakehw"
+    chunks = synth.encode("h264", 320, 640, 6, keyint=3)
+    cfg = chunks[0].data
+    got = dec.decode(cfg + chunks[1].data)
+    assert dec.hw_name is None and dec.description == "logiciel"
+    assert len(got) == 1 and (got[0].native_width, got[0].native_height) == (320, 640)   # l'image clé n'est pas perdue
+    dec.reset()
+    assert dec.hw_name is None                                                              # pas de nouvel essai matériel
+
+
+def test_hardware_that_never_outputs_a_frame_is_abandoned(monkeypatch):
+    _fake_hw(monkeypatch, lambda n, av: [])
+    dec = VideoDecoder("h264", prefer_hw=True)
+    chunks = synth.encode("h264", 320, 640, D.HW_UNVERIFIED_MAX_SILENT_PACKETS + 12, keyint=10)
+    cfg, frames = chunks[0].data, []
+    for c in chunks[1:]:
+        frames += dec.decode((cfg + c.data) if c.flags & 2 else c.data)
+    assert dec.hw_name is None
+    assert frames                                       # le logiciel reprend à l'image clé suivante
+
+
+def test_verified_hardware_tolerates_isolated_errors_but_not_a_run_of_them(monkeypatch):
+    class Frame:      # décodeur « matériel » qui sort une vraie image la première fois, puis des erreurs
+        pass
+    chunks = synth.encode("h264", 320, 640, 20, keyint=1000)
+    cfg = chunks[0].data
+    soft = VideoDecoder("h264", prefer_hw=False)
+    real_frames = soft._ctx.decode(__import__("av").Packet(cfg + chunks[1].data))
+    assert real_frames
+
+    def behaviour(n, av):
+        if n == 1:
+            return real_frames          # vérifie l'accélération
+        raise _invalid(av)
+    _fake_hw(monkeypatch, behaviour)
+    dec = VideoDecoder("h264", prefer_hw=True)
+    assert dec.decode(cfg + chunks[1].data) and dec._hw_verified
+    for c in chunks[2:2 + D.HW_MAX_CONSECUTIVE_ERRORS - 1]:
+        assert dec.decode(c.data) == []
+        assert dec.hw_name == "fakehw"                  # erreurs isolées : on garde le matériel
+    dec.decode(chunks[2 + D.HW_MAX_CONSECUTIVE_ERRORS].data)
+    assert dec.hw_name is None                          # une série d'erreurs : logiciel
+
+
+def test_software_invalid_data_is_counted_and_returns_nothing():
+    dec = VideoDecoder("h264", prefer_hw=False)
+    chunks = synth.encode("h264", 320, 640, 4, keyint=1000)
+    assert dec.decode(chunks[2].data) == []             # image P sans image clé ni SPS/PPS
+    assert dec.damaged_packets == 1

@@ -31,6 +31,11 @@ def test_aspect_ratio_preserved_with_black_bars(cls):
     w.show()
     w.set_frame(solid(100, 200, (255, 0, 0)))
     img = w.grab().toImage() if cls is SoftwareVideoWidget else w.grabFramebuffer()
+    if cls is GLVideoWidget and img.isNull():
+        # Limite de l'environnement, pas de l'application : sans contexte OpenGL (Windows « offscreen » sur un serveur de CI
+        # sans carte graphique) il n'y a aucun rendu à lire. L'application passe alors au rendu logiciel
+        # (DisplayWindow.ensure_valid_gl) ; la même vérification est faite sur SoftwareVideoWidget.
+        pytest.skip("pas de contexte OpenGL dans cet environnement : rien à lire")
     assert img.pixelColor(10, 200) == QColor(0, 0, 0)           # bande gauche noire
     assert img.pixelColor(390, 200) == QColor(0, 0, 0)          # bande droite noire
     c = img.pixelColor(200, 200)

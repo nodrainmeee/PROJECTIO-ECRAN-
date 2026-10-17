@@ -264,3 +264,18 @@ def test_size_change_drops_stale_frames_still_waiting():
         q.put(vid(key=(n == 0), n=n))
     q.put(P.Packet(P.T_SIZE, 0, 0, P.pack_size(640, 320, 1)[16:]))
     assert [p.type for p in drain(q)] == [P.T_SIZE]
+
+
+def test_damaged_stream_makes_worker_request_a_keyframe():
+    """Flux abîmé (images P sans image clé de départ) : le décodeur compte, le worker demande une image clé (limité à 1 / 0,5 s)."""
+    requests = []
+    q, latest = PacketQueue(), LatestFrame()
+    w = DecodeWorker(q, latest, "h264", prefer_hw=False, request_keyframe=lambda: requests.append(1))
+    w.start()
+    stream = synth.encode("h264", 320, 640, 6, keyint=1000)
+    for ch in stream[2:]:                                # on saute l'image clé et la config
+        q.put(P.Packet(P.T_VIDEO, ch.flags, ch.pts_us, ch.data, time.monotonic()))
+    assert wait_for(lambda: requests)
+    time.sleep(0.2)
+    assert len(requests) == 1
+    w.stop()

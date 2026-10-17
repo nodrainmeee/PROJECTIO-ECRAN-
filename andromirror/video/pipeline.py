@@ -182,6 +182,7 @@ class DecodeWorker(threading.Thread):
         self._factory = decoder_factory or VideoDecoder
         self._halt = threading.Event()
         self._config = b""
+        self._last_keyframe_request = 0.0
 
     def stop(self) -> None:
         self._halt.set()
@@ -241,7 +242,10 @@ class DecodeWorker(threading.Thread):
         if pkt.is_key and self._config:
             data = self._config + data       # le décodeur doit voir SPS/PPS juste avant l'image clé
         before_hw = decoder.hw_name
+        before_damaged = getattr(decoder, "damaged_packets", 0)
         frames = decoder.decode(data, pkt.pts_us, pkt.received_at)
+        if getattr(decoder, "damaged_packets", 0) != before_damaged and not (before_hw and decoder.hw_name is None):
+            self._request_keyframe_limited()      # flux abîmé : repart d'une image clé
         if before_hw and decoder.hw_name is None:
             # bascule matériel → logiciel : le nouveau décodeur n'a pas vu l'image clé
             self.stats.decoder = decoder.description
@@ -251,6 +255,12 @@ class DecodeWorker(threading.Thread):
                 self._request_keyframe()
         for fr in frames:
             self._publish(fr)
+
+    def _request_keyframe_limited(self) -> None:
+        now = time.monotonic()
+        if self._request_keyframe and now - self._last_keyframe_request >= KEYFRAME_REQUEST_MIN_INTERVAL:
+            self._last_keyframe_request = now
+            self._request_keyframe()
 
     def _publish(self, fr: DecodedFrame) -> None:
         st = self.stats

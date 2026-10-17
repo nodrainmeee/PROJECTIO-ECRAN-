@@ -22,6 +22,11 @@ log = get_logger("decodeur")
 HW_PREFERENCE_WINDOWS = ["d3d11va", "dxva2", "cuda", "qsv"]
 HW_PREFERENCE_OTHER = ["vaapi", "cuda", "qsv", "videotoolbox"]
 
+# Un décodeur matériel « non vérifié » (aucune image produite) qui ne sort rien pendant autant de paquets est abandonné ;
+# un décodeur matériel déjà vérifié est abandonné après autant d'erreurs « données invalides » de suite.
+HW_UNVERIFIED_MAX_SILENT_PACKETS = 30
+HW_MAX_CONSECUTIVE_ERRORS = 8
+
 
 class DecoderError(Exception):
     """Le décodeur ne peut pas fonctionner (par ex. PyAV absent)."""
@@ -80,6 +85,9 @@ class VideoDecoder:
         self.hw_name: Optional[str] = None          # accélération réellement utilisée (None = logiciel)
         self._hw_failed = False
         self._hw_verified = False
+        self._hw_silent = 0          # paquets envoyés au décodeur matériel non vérifié sans qu'il sorte d'image
+        self._hw_errors = 0          # erreurs de suite du décodeur matériel
+        self.damaged_packets = 0     # paquets « données invalides » vus (le serveur doit renvoyer une image clé)
         self._open()
 
     # -- ouverture ------------------------------------------------------------------------------
@@ -102,6 +110,8 @@ class VideoDecoder:
         self._ctx = None
         self.hw_name = None
         self._hw_verified = False
+        self._hw_silent = 0
+        self._hw_errors = 0
         if self.prefer_hw and not self._hw_failed:
             for name in hw_candidates():
                 try:
@@ -130,28 +140,58 @@ class VideoDecoder:
     # -- décodage -----------------------------------------------------------------------------------
     def decode(self, data: bytes, pts_us: int = 0, received_at: float = 0.0) -> List[DecodedFrame]:
         """Décode une unité d'accès. Retourne 0, 1 ou plusieurs images. Lève DecoderError si irrécupérable."""
-        import av
         if not data:
             return []        # un paquet vide « viderait » le décodeur (fin de flux) : jamais envoyé
+        return self._decode_raw(data, pts_us, received_at)
+
+    def _decode_raw(self, data: bytes, pts_us: int, received_at: float):
+        import av
+        hw = self.hw_name
         try:
-            frames = self._ctx.decode(av.Packet(data))
+            decoded = self._ctx.decode(av.Packet(data))
+            out = [self._convert(f, pts_us, received_at) for f in decoded]
         except av.error.InvalidDataError as exc:
+            self.damaged_packets += 1
+            if hw:
+                # Avec l'accélération matérielle, « données invalides » veut très souvent dire « ce pilote / cette carte ne
+                # sait pas décoder ce flux » (ex. périphérique Direct3D logiciel sans carte graphique) : jamais une
+                # raison de rester sans image. Tant qu'elle n'a rien produit, on passe au logiciel tout de suite.
+                self._hw_errors += 1
+                if not self._hw_verified or self._hw_errors >= HW_MAX_CONSECUTIVE_ERRORS:
+                    return self._fall_back_to_software(f"données invalides ({exc})", data, pts_us, received_at)
+                log.warning("Données vidéo invalides ignorées : %s", exc)
+                return []
             # Flux abîmé : on laisse le décodeur reprendre à la prochaine image clé.
             log.warning("Données vidéo invalides ignorées : %s", exc)
             return []
         except Exception as exc:  # noqa: BLE001
-            if self.hw_name:
-                log.warning("Échec du décodage matériel (%s) : %s. Passage au décodage logiciel.",
-                            self.hw_name, exc)
-                self._hw_failed = True
-                self._open()
-                return []        # l'appelant demandera une image clé
+            if hw:
+                return self._fall_back_to_software(str(exc), data, pts_us, received_at)
             raise DecoderError(f"décodage impossible : {exc}") from exc
-        out = [self._convert(f, pts_us, received_at) for f in frames]
-        if out and self.hw_name and not self._hw_verified:
-            self._hw_verified = True
-            log.info("Décodage matériel confirmé (%s)", self.hw_name)
+        if hw:
+            self._hw_errors = 0
+            if out:
+                self._hw_silent = 0
+                if not self._hw_verified:
+                    self._hw_verified = True
+                    log.info("Décodage matériel confirmé (%s)", hw)
+            elif not self._hw_verified:
+                self._hw_silent += 1
+                if self._hw_silent >= HW_UNVERIFIED_MAX_SILENT_PACKETS:
+                    return self._fall_back_to_software(
+                        f"aucune image après {self._hw_silent} paquets", data, pts_us, received_at)
         return out
+
+    def _fall_back_to_software(self, reason: str, data: bytes, pts_us: int, received_at: float):
+        """Abandonne définitivement l'accélération matérielle et rejoue le paquet courant en logiciel."""
+        log.warning("Échec du décodage matériel (%s) : %s. Passage au décodage logiciel.", self.hw_name, reason)
+        self._hw_failed = True
+        self._open()
+        try:
+            return self._decode_raw(data, pts_us, received_at) or []
+        except Exception as exc:  # noqa: BLE001 - paquet non décodable seul (image non clé) : l'appelant demande une image clé
+            log.debug("Paquet non rejoué en logiciel : %s", exc)
+            return []
 
     def _convert(self, frame, pts_us: int, received_at: float) -> DecodedFrame:
         from av.video.reformatter import Colorspace
